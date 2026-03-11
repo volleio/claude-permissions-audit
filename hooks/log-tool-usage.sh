@@ -18,7 +18,10 @@
 set -uo pipefail
 
 # CRITICAL: PostToolUse hooks that exit non-zero can block Claude Code execution
-# (see github.com/anthropics/claude-code/issues/4809). Trap ensures we always exit 0.
+# (see github.com/anthropics/claude-code/issues/4809). The ERR trap is a defense-in-depth
+# measure — without `set -e`, it only fires in specific contexts (e.g., failed commands
+# in pipefail), but it catches edge cases that the explicit guards (|| true, -z checks)
+# might miss. Belt and suspenders.
 trap 'exit 0' ERR
 
 LOG_FILE="${HOME}/.claude/tool-usage.log"

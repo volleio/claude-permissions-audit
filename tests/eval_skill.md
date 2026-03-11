@@ -592,3 +592,76 @@ Run the skill in a project containing the fixture files and verify the output ma
 - Tighten `make *` → remove and list individual safe targets (e.g., `Bash(make test)`, `Bash(make lint)`)
 - Tighten `yarn *` → `Bash(yarn test *)`, `Bash(yarn lint *)`, `Bash(yarn build *)`
 - Tighten `pnpm *` → `Bash(pnpm test *)`, `Bash(pnpm run lint *)`, `Bash(pnpm run build *)`
+
+---
+
+## Scenario 15: Broad patterns in `ask` array (lower severity than allow)
+
+### Fixture: `~/.claude/settings.json` (global)
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log *)",
+      "Bash(git status *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -f *)",
+      "Bash(sudo *)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)"
+    ],
+    "ask": [
+      "Bash(docker compose *)",
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ]
+  }
+}
+```
+
+### Expected findings:
+
+| # | Severity | Check | Entry | Issue |
+|---|----------|-------|-------|-------|
+| 1 | MEDIUM | 1 | `docker compose *` in ask | Broad pattern — includes `down -v`, `rm`. Lower severity than in allow because user still confirms |
+| 2 | MEDIUM | 1 | `git *` in ask | Broad pattern — includes destructive ops. Lower severity because prompted |
+| 3 | MEDIUM | 1 | `npm *` in ask | Broad pattern — `npm exec` allows arbitrary execution. Lower severity because prompted |
+| 4 | LOW | 3 (subset) | `git commit *` in ask | Subsumed by `git *` in ask |
+| 5 | LOW | 3 (subset) | `git push *` in ask | Subsumed by `git *` in ask |
+
+### Key behavior:
+- Broad patterns in `ask` should be flagged at **one severity level lower** than in `allow` (HIGH → MEDIUM, CRITICAL → HIGH)
+- The skill should still suggest tightening, but note that the user is already prompted for each use
+- `git commit *` and `git push *` are subsets of `git *` (all in the same `ask` array)
+
+### Expected NON-findings:
+- Deny rules → NOT flagged (broad deny is a safety feature)
+
+---
+
+## Scenario 16: Discover mode (basic)
+
+### Invocation: `/permissions-audit discover git`
+
+### Expected behavior:
+1. Runs `git --help` (or `git help`) to enumerate subcommands
+2. Asks the user which file to add rules to (global / project shared / project local)
+3. Reads existing settings to avoid suggesting duplicates
+4. Categorizes git subcommands into allow/ask/deny:
+   - **allow**: `git status *`, `git log *`, `git diff *`, `git branch *`, `git show *`, `git stash list *`, `git stash show *`, `git remote -v *`, `git tag *`
+   - **ask**: `git commit *`, `git push *`, `git merge *`, `git rebase *`, `git stash push *`, `git stash drop *`, `git checkout *`
+   - **deny**: `git push --force *`, `git reset --hard *`, `git clean -f *`
+5. Filters out any entries that already exist in settings
+6. Presents remaining suggestions in batch format with Add all / Pick individually / Skip all
+7. Creates backup before applying
+
+### Key behavior:
+- Should NOT suggest `Bash(git *)` (overly broad)
+- Should only run `--help` / `-h` / `help` subcommands — no actual git operations
+- Should scope each entry to specific subcommands
+- Existing rules in any settings file should be excluded from suggestions

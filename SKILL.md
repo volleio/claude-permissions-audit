@@ -217,7 +217,7 @@ Flag project-specific entries in global settings that should live in the relevan
 - Project-specific `WebFetch` domains that only apply to one project
 - Entries referencing project-specific commands not used across projects
 
-Heuristic: If a command is only relevant to one project type (e.g., a specific test runner, a specific database), it likely belongs in project settings.
+Heuristic: If a command is only relevant to one project type (e.g., a specific test runner, a specific database), it likely belongs in project settings. Misplaced rules are MEDIUM severity (global pollution) or LOW if debatable.
 
 **9. Syntax Inconsistencies**
 
@@ -234,7 +234,8 @@ Not all permissions are Bash commands. Flag overly broad patterns for other tool
 | `mcp__*` or `mcp__<server>__*` in allow | HIGH | Grants all operations for an MCP server — some may be destructive |
 | `Read(*)` or `Write(*)` in allow | HIGH | Unrestricted file read/write, including secrets |
 | `Edit(*)` in allow | MEDIUM | Unrestricted file editing |
-| `WebFetch(*)` or `WebSearch` in allow | LOW | Informational — broad but low-risk |
+| `WebFetch(*)` in allow | LOW | Informational — broad but low-risk |
+| `WebSearch` in allow | LOW | Informational — `WebSearch` has no `(*)` pattern (it's a bare tool name), but auto-approving it is low-risk |
 
 For MCP wildcards like `mcp__logfire__*`, suggest scoping to specific operations if the server's available tools are known. Otherwise flag as HIGH and note that the risk depends on what the server exposes.
 
@@ -582,6 +583,7 @@ The log file grows unbounded. Periodically check its size and truncate:
 
 ```bash
 wc -c ~/.claude/tool-usage.log   # check size
+# Stop the hook (remove PostToolUse entry) before truncating to avoid data loss from concurrent writes
 tail -1000 ~/.claude/tool-usage.log > ~/.claude/tool-usage.log.tmp && mv ~/.claude/tool-usage.log.tmp ~/.claude/tool-usage.log  # keep last 1000 entries
 ```
 

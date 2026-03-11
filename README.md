@@ -10,7 +10,7 @@ Also includes a **discover mode** to explore new CLI tools and generate scoped p
 
 ```bash
 git clone https://github.com/volleio/claude-permissions-audit.git
-ln -s "$(pwd)/claude-permissions-audit" ~/.claude/skills/permissions-audit
+cd claude-permissions-audit && ln -s "$(pwd)" ~/.claude/skills/permissions-audit
 ```
 
 Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with skills support.

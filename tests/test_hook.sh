@@ -12,6 +12,9 @@
 
 set -uo pipefail
 
+# Clean up temp files on exit (including Ctrl-C)
+trap 'rm -f /tmp/hook-test-*.log /tmp/hook-run-*.sh 2>/dev/null' EXIT
+
 HOOK_SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/hooks/log-tool-usage.sh"
 TEST_LOG=""
 TESTS_RUN=0
@@ -103,7 +106,11 @@ assert_exit_zero() {
 
 make_input() {
   local cmd="$1"
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"},"hook_event_name":"PostToolUse"}' "$cmd"
+  # Use jq to properly escape the command string into valid JSON.
+  # Without this, commands containing quotes, backslashes, or newlines
+  # would produce malformed JSON. (Those tests bypass make_input and
+  # construct JSON manually, but this keeps the helper safe for future use.)
+  printf '%s' "$cmd" | jq -Rs '{"tool_name":"Bash","tool_input":{"command":.},"hook_event_name":"PostToolUse"}'
 }
 
 # ============================================================
