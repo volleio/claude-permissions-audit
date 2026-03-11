@@ -1,8 +1,8 @@
 ---
 name: permissions-audit
 description: >-
-  Use when reviewing, auditing, or cleaning up Claude Code permission allow and
-  deny lists across settings files. Flags overly permissive patterns, deprecated
+  Use when reviewing, auditing, or cleaning up Claude Code permission allow, deny,
+  and ask lists across settings files. Flags overly permissive patterns, deprecated
   syntax, duplicates, missing safety rules, and suggests project-type-aware additions.
 user-invokable: true
 args:
@@ -11,7 +11,22 @@ args:
     required: false
 ---
 
-Audit Claude Code permission allow/deny lists across all settings files. Classify issues by risk, suggest tightening, and interactively apply fixes.
+Audit Claude Code permission allow/deny/ask lists across all settings files. Classify issues by risk, suggest tightening, and interactively apply fixes.
+
+## Permission Model Reference
+
+Claude Code has three permission arrays, evaluated in order: **deny → ask → allow**. First match wins.
+
+| Array | Behavior |
+|-------|----------|
+| `allow` | Auto-approved — no prompt |
+| `ask` | Always prompts for confirmation |
+| `deny` | Auto-rejected — tool cannot be used at all |
+
+Anything not matching any array falls through to the `defaultMode` setting. Use the right array for the intent:
+- **allow** — safe, read-only, or frequently-used commands (linters, test runners, git log)
+- **ask** — commands that should succeed but need human review each time (git commit, git push, deployments)
+- **deny** — commands that should never execute, even if explicitly requested (force push, rm -rf /)
 
 ## Phase 1: Discovery
 
@@ -25,7 +40,7 @@ Read each file. If a file doesn't exist, note it and continue.
 2. **Project shared**: `.claude/settings.json` (in project root)
 3. **Project local**: `.claude/settings.local.json` (in project root)
 
-Extract only `permissions.allow` and `permissions.deny` arrays from each. Ignore all other fields (env, hooks, model, statusLine, spinnerVerbs, etc.) — they are out of scope and must never be modified.
+Extract `permissions.allow`, `permissions.deny`, and `permissions.ask` arrays from each. Ignore all other fields (env, hooks, model, statusLine, spinnerVerbs, etc.) — they are out of scope and must never be modified.
 
 ### Project Type Detection
 
@@ -61,7 +76,7 @@ If run outside a project (no `.claude/` directory in the working directory), gra
 
 ## Phase 2: Audit
 
-Analyze every entry in every allow/deny list. Classify each finding by risk level.
+Analyze every entry in every allow/deny/ask list. Classify each finding by risk level.
 
 ### Risk Levels
 
@@ -101,7 +116,7 @@ The legacy `:*` suffix syntax is deprecated. The current syntax uses a space: ` 
 
 **3. Duplicates**
 
-- **Exact duplicates**: Same string appears multiple times in the same file's allow or deny list
+- **Exact duplicates**: Same string appears multiple times in the same file's allow, deny, or ask list
 - **Cross-file duplicates**: Same rule in both global and project settings (project rule is redundant if global already allows it). Always flag — let the user decide whether to keep or remove
 - **Subset duplicates**: `Bash(mise run check *)` is a subset of `Bash(mise run check:*)` or vice versa. `Bash(pip index *)` subsumes `Bash(pip index versions *)`
 
@@ -125,17 +140,31 @@ Claude Code has built-in tools that replace common shell commands. These Bash al
 | `Bash(wc *)` or `Bash(wc:*)` | Grep (count mode) or Bash | Low priority, but note overlap |
 | `Bash(tree *)` or `Bash(tree:*)` | Glob + Bash(ls) | Low priority |
 
-**6. Missing Deny Rules**
+**6. Missing Deny/Ask Rules**
 
-Check if these baseline safety denies exist. If not, suggest adding them:
+Check if these baseline safety rules exist. If not, suggest adding them.
 
+Suggested **deny** rules (should never execute):
 - `Bash(git push --force *)` (or `--force-with-lease`, `-f`)
 - `Bash(git reset --hard *)`
 - `Bash(git clean -f *)`
 - `Bash(rm -rf /*)` (no space — matches `rm -rf /etc`, `rm -rf /home`, etc.)
 - `Bash(rm -rf ~*)` (no space — matches `rm -rf ~/Documents`, `rm -rf ~`, etc.)
 
-Check both global and project deny lists. Global is preferred for these.
+Suggested **ask** rules (should prompt, not auto-approve or auto-deny):
+- `Bash(git commit *)` — human should review before committing
+- `Bash(git push *)` — human should review before pushing
+- `Bash(docker compose down *)` — stops services, may lose data with `-v`
+
+Check all three arrays across global and project settings. Global is preferred for baseline safety rules.
+
+**9. Wrong Array Placement**
+
+Flag entries in the wrong permission array:
+- Destructive commands in `allow` that should be in `deny` or `ask` (e.g., `Bash(git push --force *)` in allow)
+- Review-worthy commands in `allow` that should be in `ask` (e.g., `Bash(git commit *)` in allow — human should review)
+- Safe read-only commands in `deny` or `ask` that could be in `allow` (e.g., `Bash(git log *)` in ask)
+- Commands in `deny` that block legitimate use — suggest `ask` instead if the command is sometimes needed (e.g., `Bash(git commit *)` in deny blocks all commits; `ask` allows with confirmation)
 
 **7. Misplaced Rules**
 
@@ -192,7 +221,7 @@ Based on detected project type, suggest additions unless the rule already exists
 | GitHub | `Bash(gh pr list *)`, `Bash(gh pr view *)`, `Bash(gh pr diff *)`, `Bash(gh issue list *)`, `Bash(gh issue view *)` |
 | Make | `Bash(make *)` (if Makefile only has safe targets) or individual `Bash(make <target>)` entries |
 
-Also suggest baseline deny rules if missing (see Phase 2, check 6).
+Also suggest baseline deny and ask rules if missing (see Phase 2, check 6).
 
 **Do NOT suggest rules that already exist** in any of the three settings files, even if in a different syntax variant. Check for semantic equivalence: `Bash(uv sync)` ≈ `Bash(uv sync *)` ≈ `Bash(uv sync:*)`.
 
@@ -299,8 +328,8 @@ Changes made:
 Settings files are JSON. Follow these rules strictly:
 
 1. **Read before edit**: Always Read the file immediately before editing to get current content
-2. **Targeted array edits**: Use the Edit tool to modify specific entries in the `permissions.allow` or `permissions.deny` arrays. Never rewrite the entire file.
-3. **Preserve structure**: Never modify, reorder, or touch any fields outside of `permissions.allow` and `permissions.deny`
+2. **Targeted array edits**: Use the Edit tool to modify specific entries in the `permissions.allow`, `permissions.deny`, or `permissions.ask` arrays. Never rewrite the entire file.
+3. **Preserve structure**: Never modify, reorder, or touch any fields outside of `permissions.allow`, `permissions.deny`, and `permissions.ask`
 4. **Valid JSON**: After each edit, verify the file is valid JSON by reading it back
 5. **Array operations**:
    - **Remove entry**: Edit the array to remove the specific line (handle trailing commas)
@@ -313,7 +342,7 @@ Settings files are JSON. Follow these rules strictly:
 
 - **NEVER** modify settings without explicit user approval for each change
 - **NEVER** touch non-permission fields (env, hooks, model, statusLine, spinnerVerbs, enabledPlugins, etc.)
-- **NEVER** remove deny rules without explicit user request — deny rules are safety boundaries
+- **NEVER** remove deny or ask rules without explicit user request — these are safety boundaries
 - **NEVER** add overly broad patterns as suggestions (no `Bash(git *)`, always scoped)
 - **NEVER** guess at project-specific commands — only suggest what's detected from indicator files and tool output
 - **NEVER** migrate `:*` syntax on entries that aren't being touched for another fix (unless user opts into batch migration in Step 4)
