@@ -6,12 +6,18 @@ description: >-
   syntax, duplicates, missing safety rules, and suggests project-type-aware additions.
 user-invokable: true
 args:
-  - name: scope
-    description: "Audit scope: 'global', 'project', or 'all' (default: all)"
+  - name: command
+    description: "Scope ('global'/'project'/'all') or 'discover <tool-name>' to explore a CLI tool's commands"
     required: false
 ---
 
-Audit Claude Code permission allow/deny/ask lists across all settings files. Classify issues by risk, suggest tightening, and interactively apply fixes.
+Audit Claude Code permission allow/deny/ask lists across all settings files. Classify issues by risk, suggest tightening, and interactively apply fixes. Can also discover permissions for new CLI tools.
+
+## Mode Selection
+
+Parse the first argument to determine the mode:
+- `global`, `project`, `all`, or no argument → **Audit mode** (Phases 1-4 below)
+- `discover <tool-name>` → **Discover mode** (see Discover Mode section at the end)
 
 ## Permission Model Reference
 
@@ -50,6 +56,7 @@ Read `permissions.defaultMode` from each file. Surface the value in the Phase 4 
 |------|------|------|
 | `"default"` or absent | OK | Standard behavior — prompts on first use |
 | `"plan"` | OK | Requires plan approval |
+| `"dontAsk"` | OK | Auto-denies unless pre-approved in allow rules |
 | `"bypassPermissions"` | CRITICAL | All permission rules are ignored — every tool auto-approved |
 | `"acceptEdits"` | HIGH | File edits auto-approved without review |
 
@@ -78,7 +85,7 @@ If mise is detected, run `mise tasks ls` to enumerate available task names. Thes
 
 ### Scope Filtering
 
-If the user passed a `scope` argument:
+If the argument is one of the audit scopes:
 - `global` — only audit `~/.claude/settings.json`
 - `project` — only audit `.claude/settings.json` and `.claude/settings.local.json`
 - `all` (default) — audit all three files
@@ -215,17 +222,27 @@ Not all permissions are Bash commands. Flag overly broad patterns for other tool
 
 For MCP wildcards like `mcp__logfire__*`, suggest scoping to specific operations if the server's available tools are known. Otherwise flag as informational.
 
+**11. Usage Log Analysis (optional)**
+
+If `~/.claude/tool-usage.log` exists (created by the companion logging hook — see Usage Logging section), analyze it for:
+- Frequently used Bash commands not in any allow list → suggest adding to reduce approval fatigue
+- Commands that appear in allow but were never used in the log period → flag as potentially stale (LOW)
+
+This check is informational only — findings are LOW severity and presented as suggestions in Phase 3 Step 3 (batch additions). If the log file doesn't exist, skip this check silently.
+
 ### Settings File Merge Semantics
 
-Rules from all files are merged, then the **most restrictive tier wins regardless of source file**: deny > ask > allow. If a pattern matches a deny in ANY file, it's denied — no other file can override it. Same for ask over allow.
+Permission arrays (`allow`, `deny`, `ask`) are **concatenated** across all settings files — not replaced. Then rules are evaluated in order: **deny → ask → allow, first match wins**. This means if a pattern appears in deny in ANY file, it's denied — no other file can override it. Same for ask over allow.
 
 Examples:
-- Global `allow` + project `deny` → denied (deny wins)
-- Global `allow` + project `ask` → prompted (ask wins)
-- Global `ask` + project `allow` → prompted (ask wins — NOT project overriding global)
-- Global `deny` + project `allow` → denied (deny wins)
+- Global `allow` + project `deny` for same pattern → denied (deny checked first)
+- Global `allow` + project `ask` for same pattern → prompted (ask checked before allow)
+- Global `ask` + project `allow` for same pattern → prompted (ask checked before allow)
+- Global `deny` + project `allow` for same pattern → denied (deny checked first)
 
-This means cross-file "narrowing" (a project adding an ask or deny for something globally allowed) is a legitimate pattern, not a conflict. Use this understanding when assessing cross-file duplicates (check 3) and misplaced rules (check 8).
+Scalar settings like `defaultMode` are **replaced** by higher-precedence scopes (local > shared > global), not merged.
+
+Cross-file "narrowing" (a project adding an ask or deny for something globally allowed) is a legitimate pattern, not a conflict. Use this understanding when assessing cross-file duplicates (check 3) and misplaced rules (check 8).
 
 ## Phase 3: Suggest
 
@@ -272,9 +289,21 @@ Also suggest baseline deny and ask rules if missing (see Phase 2, check 6).
 
 Present findings and apply changes interactively. **NEVER auto-modify settings files without explicit user approval for each change.**
 
+**CRITICAL INTERACTION RULE**: This phase is iterative. Present ONE step at a time, pause for user input using `AskUserQuestion`, apply changes, then continue to the next step. NEVER output multiple steps in a single response. Each response should contain at most ONE issue or ONE batch group.
+
+### Step 0: Backup
+
+Before making any changes, create backups of settings files that have no automatic git backup:
+- `~/.claude/settings.json` → `~/.claude/settings.backup.json`
+- `.claude/settings.local.json` → `.claude/settings.local.backup.json` (if it exists)
+
+`.claude/settings.json` (project shared) is tracked by git — no backup needed (`git checkout` can restore it).
+
+Use the Bash tool to copy: `cp ~/.claude/settings.json ~/.claude/settings.backup.json`. If a backup already exists from a previous run, overwrite it (only the most recent backup is kept). Inform the user which backups were created.
+
 ### Step 1: Summary
 
-Present a summary table:
+Present only the summary table, then immediately use `AskUserQuestion` to ask the user if they want to proceed with the issue-by-issue review.
 
 ```
 ## Permissions Audit Results
@@ -293,31 +322,37 @@ Present a summary table:
 **N tightening recommendations, N additions suggested**
 ```
 
+Then use `AskUserQuestion` with the question: "Ready to review issues? (yes / skip to additions / skip to syntax migration / done)"
+
 ### Step 2: Issue-by-Issue Review
 
-Present issues in severity order: CRITICAL first, then HIGH, MEDIUM, LOW.
+Present issues one at a time in severity order: CRITICAL first, then HIGH, MEDIUM, LOW.
 
-For each issue, show:
+For each issue:
+1. Output the issue description (ONE issue only)
+2. Use `AskUserQuestion` to ask: "Accept / Reject / Skip?" (include issue number and total, e.g. "Issue 1/11")
+3. Wait for the response
+4. If accepted, apply the change using Edit tool, then confirm it was applied
+5. Present the NEXT issue and repeat
 
+Issue format:
 ```
-### [SEVERITY] Issue Title
+### [SEVERITY] Issue Title (N of M)
 **File**: ~/.claude/settings.json (global)
 **Current**: `Bash(docker compose:*)`
 **Problem**: Broad wildcard on command family with destructive subcommands (down -v, rm). Also uses deprecated `:*` syntax.
 **Proposed**:
   - Remove: `Bash(docker compose:*)`
   - Add: `Bash(docker compose up *)`, `Bash(docker compose ps *)`, `Bash(docker compose logs *)`, `Bash(docker compose build *)`
-
-Accept / Reject / Skip?
 ```
-
-Wait for user response before proceeding to next issue. Use the AskUserQuestion tool if needed.
 
 When an entry is being modified for any reason (tightening, dedup, relocation), also migrate `:*` to ` *` in the same edit. Do NOT create separate issues for `:*` migration on entries already being modified.
 
+If the user says "accept all" or "accept remaining", apply all remaining issues without further prompting and report what was done.
+
 ### Step 3: Batch Additions
 
-After individual issues, present project-type suggestions as a group:
+After all individual issues are resolved, present project-type suggestions as a single group, then use `AskUserQuestion` to ask: "Add all / Pick individually / Skip all?"
 
 ```
 ### Suggested Additions for Python/uv + Mise project
@@ -330,31 +365,29 @@ These commands are commonly needed but not in your allow/ask lists:
 | 2 | `Bash(gh issue list *)` | allow | global | GitHub issue browsing |
 | 3 | `Bash(git push *)` | ask | global | Push with human review |
 | ... | ... | ... | ... | ... |
-
-Add all / Pick individually / Skip all?
 ```
+
+If "pick individually", present each addition one at a time using `AskUserQuestion` for each.
 
 ### Step 4: Remaining Deprecated Syntax
 
-After all other changes, if there are `:*` entries that were NOT touched in Steps 2-3, offer a batch migration:
+After all other changes, if there are `:*` entries that were NOT touched in Steps 2-3, present the migration table and use `AskUserQuestion` to ask: "Migrate all / Pick individually / Skip?"
 
 ```
 ### Deprecated `:*` Syntax Migration
 
-N entries still use the deprecated `:*` syntax. Migrate all to ` *`?
+N entries still use the deprecated `:*` syntax:
 
 | Current | Migrated |
 |---------|----------|
 | `Bash(tree:*)` | `Bash(tree *)` |
 | `Bash(ls:*)` | `Bash(ls *)` |
 | ... | ... |
-
-Migrate all / Pick individually / Skip?
 ```
 
 ### Step 5: Final Summary
 
-After all changes are applied:
+After all changes are applied, present a single summary:
 
 ```
 ## Audit Complete
@@ -382,7 +415,7 @@ Settings files are JSON. Follow these rules strictly:
    - **Replace entry**: Edit old string to new string
    - **Create array**: If the file has no `ask` (or `deny`) array and one is needed, add it as a sibling to the existing arrays inside the `permissions` object. Example: insert `"ask": ["Bash(git commit *)"]` after the `allow` array's closing `]`
 6. **Batch edits**: When multiple changes apply to the same file, make them in a single Edit operation to avoid intermediate invalid states
-7. **Backup note**: Settings files are typically in git (`.claude/settings.json`) or gitignored (`settings.local.json`, `~/.claude/settings.json`). Remind the user they can `git checkout` project settings if needed, but global/local settings have no automatic backup.
+7. **Backup note**: Step 0 creates backups before changes. Project shared settings can also be restored with `git checkout`. Remind the user that `~/.claude/settings.backup.json` exists if they need to revert.
 
 ## NEVER Rules
 
@@ -394,3 +427,123 @@ Settings files are JSON. Follow these rules strictly:
 - **NEVER** migrate `:*` syntax on entries that aren't being touched for another fix (unless user opts into batch migration in Step 4)
 - **NEVER** assume WebFetch domains are stale — only flag if user confirms the domain is no longer needed
 - **NEVER** rewrite entire settings files — always use targeted edits
+
+## Discover Mode
+
+When invoked with `/permissions-audit discover <tool-name>`, explore a CLI tool and suggest permission entries without running a full audit.
+
+### Step 1: Explore the tool
+
+1. Run `<tool> --help` (or `<tool> -h`, `<tool> help`) to get top-level commands/subcommands
+2. For command groups that have their own subcommands, recurse one level: `<tool> <group> --help`
+3. Stop at 2 levels of depth to avoid excessive exploration
+4. If the tool is well-known (kubectl, aws, gh, docker, terraform, pup), leverage knowledge of its command tree to supplement `--help` output
+
+**Security**: Only run `--help` / `-h` / `help` subcommands. Never run the tool's actual commands (e.g., don't run `pup synthetics tests create` to "test" it). Discovery is read-only.
+
+### Step 2: Determine target file
+
+Before suggesting entries, ask the user where rules should go. Use `AskUserQuestion`:
+- Global (`~/.claude/settings.json`) — if the tool is used across projects
+- Project shared (`.claude/settings.json`) — if team-shared for this project
+- Project local (`.claude/settings.local.json`) — if personal/credential-adjacent
+
+### Step 3: Read existing settings
+
+Read the target file (and all other settings files) to collect existing permission entries. This is needed to avoid suggesting entries that already exist — check for semantic equivalence: `Bash(cmd)` ≈ `Bash(cmd *)` ≈ `Bash(cmd:*)`.
+
+### Step 4: Categorize and suggest
+
+Classify each discovered command by risk:
+
+| Category | Keyword signals | Target array |
+|----------|----------------|-------------|
+| Read-only | list, get, show, describe, search, status, version, info, view, inspect, logs, whoami | allow |
+| Write (reversible) | create, update, set, configure, run, start, stop, restart, trigger, push, apply | ask |
+| Write (destructive) | delete, destroy, remove, purge, drop, force, reset, wipe, terminate | deny |
+
+Filter out any entries that already exist in any settings file. Present remaining suggestions using the same interactive format as Phase 4 Step 3 (batch additions with `AskUserQuestion`).
+
+Format: `Bash(<tool> <subcommand> *)` scoped to specific subcommands — never suggest `Bash(<tool> *)`.
+
+### Step 5: Backup and apply
+
+Before writing any changes, create a backup of the target file (same as Phase 4 Step 0 — `cp <file> <file>.backup`). Then apply accepted entries using the JSON Editing Rules.
+
+## Usage Logging (Optional)
+
+An **optional** companion hook that logs Bash tool usage to `~/.claude/tool-usage.log`. This enables check 11 (usage log analysis) in audit mode. The audit skill works fully without this hook — it only adds usage-pattern suggestions.
+
+### Tradeoffs
+
+Before installing, understand what you're opting into:
+
+| Benefit | Cost |
+|---------|------|
+| Identifies frequently-prompted commands to add to allow | Adds ~5-10ms overhead per Bash tool call (fork + jq + sed + file write) |
+| Surfaces stale allow entries you never use | Logs every Bash command to disk in plaintext |
+| Reduces approval fatigue over time | Redaction is best-effort — secrets in non-`KEY=VALUE` formats can leak (e.g., `curl -H "Authorization: Bearer sk-..."`, base64 tokens as positional args) |
+
+**Recommendation**: Install it, let it collect data for a week or two, run `/permissions-audit` to get suggestions, then **uninstall it**. Don't leave it running permanently.
+
+### Installation
+
+Requires `jq` (JSON processor). The script silently does nothing if jq is not available.
+
+1. Copy: `cp hooks/log-tool-usage.sh ~/.claude/hooks/`
+2. Chmod: `chmod +x ~/.claude/hooks/log-tool-usage.sh`
+3. Add a `PostToolUse` entry **inside your existing `hooks` object** in `~/.claude/settings.json`:
+
+```json
+"PostToolUse": [
+  {
+    "matcher": "Bash",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "~/.claude/hooks/log-tool-usage.sh"
+      }
+    ]
+  }
+]
+```
+
+**Important**: If you already have a `hooks` object (e.g., with `PreToolUse`), add `PostToolUse` as a sibling key — don't replace the entire `hooks` object.
+
+### Uninstallation
+
+Remove the `PostToolUse` entry from `~/.claude/settings.json` and optionally delete the log:
+
+```bash
+rm ~/.claude/hooks/log-tool-usage.sh
+rm ~/.claude/tool-usage.log
+```
+
+### What it logs
+
+Each line: `<ISO-8601 timestamp> <redacted command>`
+
+Secrets are redacted before writing: `KEY=VALUE` patterns where KEY contains PASSWORD, TOKEN, SECRET, API_KEY, CREDENTIAL, AWS_SECRET_ACCESS_KEY, or PRIVATE_KEY have their value replaced with `***REDACTED***`. Both unquoted (`KEY=value`) and quoted (`KEY="value"`, `KEY='value'`) forms are redacted.
+
+**Redaction is best-effort.** It does NOT catch: secrets as positional arguments, bearer tokens in headers, base64-encoded credentials, or any format that isn't `KEY=VALUE`. The log file is written with 0600 permissions (owner-only read/write).
+
+### What it does NOT log
+
+- Tool output (only the command string)
+- Non-Bash tool calls (Read, Write, Edit, etc.)
+- Commands that were denied (PostToolUse only fires after execution)
+
+### Safety: exit code handling
+
+PostToolUse hooks that exit non-zero can block Claude Code from executing further commands ([github.com/anthropics/claude-code/issues/4809](https://github.com/anthropics/claude-code/issues/4809)). The hook script uses `trap 'exit 0' ERR` to guarantee it always exits cleanly, even if jq, sed, or file I/O fails.
+
+### Log management
+
+The log file grows unbounded. Periodically check its size and truncate:
+
+```bash
+wc -c ~/.claude/tool-usage.log   # check size
+tail -1000 ~/.claude/tool-usage.log > ~/.claude/tool-usage.log.tmp && mv ~/.claude/tool-usage.log.tmp ~/.claude/tool-usage.log  # keep last 1000 entries
+```
+
+The audit skill only reads the log — it never modifies or deletes it.
