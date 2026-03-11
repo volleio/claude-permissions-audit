@@ -562,9 +562,15 @@ Secrets are redacted before writing: `KEY=VALUE` patterns where KEY contains PAS
 
 ### What it does NOT log
 
-- Tool output (only the command string)
+- Tool output (only the command string, not stdout/stderr)
 - Non-Bash tool calls (Read, Write, Edit, etc.)
-- Commands that were denied (PostToolUse only fires after execution)
+- Commands that were denied (PostToolUse only fires after successful execution)
+- Commands that failed (PostToolUseFailure is a separate event, not hooked)
+
+### Known limitations
+
+- **PreToolUse hook rewrites**: If you have PreToolUse hooks that rewrite commands (e.g., `rtk` token optimizer), the log captures the *rewritten* command, not the original. Permission rules match against the original command, so audit suggestions based on the log may not match the actual permission patterns needed. The audit accounts for this by treating log-based suggestions as informational (LOW severity).
+- **Multiline commands**: Commands with heredocs or `&&`-chains are collapsed to a single line (newlines replaced with spaces) to preserve the one-entry-per-line log format.
 
 ### Safety: exit code handling
 

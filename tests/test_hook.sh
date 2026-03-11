@@ -322,6 +322,32 @@ run_hook "$(make_input "MYSQL_PWD=rootpass mysql -u root")"
 assert_logged "MYSQL_PWD=***REDACTED*** mysql -u root" "MYSQL_PWD"
 teardown
 
+# --- Multiline command collapsing ---
+echo ""
+echo "Multiline command collapsing:"
+
+setup
+# JSON with literal newlines in the command value
+run_hook '{"tool_name":"Bash","tool_input":{"command":"echo hello &&\necho world"},"hook_event_name":"PostToolUse"}'
+assert_logged "echo hello && echo world" "&&-chain newlines collapsed to spaces"
+teardown
+
+setup
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"$(cat <<'"'"'EOF'"'"'\nCommit message here.\n\nCo-Authored-By: Claude\nEOF\n)\""},"hook_event_name":"PostToolUse"}'
+TESTS_RUN=$((TESTS_RUN + 1))
+actual=$(last_logged_command)
+# Should be a single line (no newlines). wc -l counts newline chars; 0 means single line.
+newline_count=$(printf '%s' "$actual" | wc -l | tr -d ' ')
+if [[ "$newline_count" == "0" ]] && [[ -n "$actual" ]]; then
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+  printf "${GREEN}  PASS${NC} Heredoc command collapsed to single line\n"
+else
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+  printf "${RED}  FAIL${NC} Heredoc command should be single line\n"
+  printf "       actual: %s\n" "$actual"
+fi
+teardown
+
 # --- ERR trap: non-zero exit protection ---
 echo ""
 echo "ERR trap (PostToolUse exit code bug protection):"

@@ -38,6 +38,10 @@ if [[ -z "$command_str" ]]; then
   exit 0
 fi
 
+# Collapse newlines to spaces — multiline commands (heredocs, &&-chains) must be
+# single-line log entries so each line has exactly one timestamp + command.
+command_str=$(printf '%s' "$command_str" | tr '\n' ' ')
+
 # Redact secrets in KEY=VALUE patterns (unquoted, double-quoted, single-quoted)
 redacted=$(printf '%s' "$command_str" | sed -E \
   -e 's/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY|DATABASE_URL|REDIS_URL|MONGO_URI|DSN|MYSQL_PWD)="[^"]*"/\1=***REDACTED***/gi' \
