@@ -28,6 +28,7 @@ Run the skill in a project containing the fixture files and verify the output ma
       "Bash(git push --force *)",
       "Bash(git reset --hard *)",
       "Bash(git clean -f *)",
+      "Bash(sudo *)",
       "Bash(rm -rf /*)",
       "Bash(rm -rf ~*)"
     ],
@@ -89,12 +90,12 @@ Run the skill in a project containing the fixture files and verify the output ma
 | 9 | MEDIUM | 2+3 | `uv sync:*` (x2) | Exact duplicate + deprecated syntax |
 | 10 | MEDIUM | 2 | `ls:*` | Deprecated syntax |
 | 11 | MEDIUM | 2 | `npx vitest run:*` | Deprecated syntax (+ misplaced in global) |
-| 12 | — | 6 | (missing) | Missing deny: git push --force, git reset --hard, git clean -f, rm -rf /, rm -rf ~ |
+| 12 | — | 6 | (missing) | Missing deny: git push --force, git reset --hard, git clean -f, sudo, rm -rf /, rm -rf ~ |
 | 13 | — | 6 | (missing) | Missing ask: git commit, git push |
 
 ### Expected suggestions:
 - Tighten: git, docker compose, find, npm, PGPASSWORD psql
-- Add deny: force push, reset --hard, clean -f, rm -rf /, rm -rf ~
+- Add deny: force push, reset --hard, clean -f, sudo, rm -rf /, rm -rf ~
 - Add ask: git commit, git push
 
 ---
@@ -280,3 +281,80 @@ Run the skill in a project containing the fixture files and verify the output ma
 |---|----------|-------|-------|
 | 1 | MEDIUM | 9+2 | `uv sync:*` (global) vs `uv sync` (project) — syntax inconsistency + deprecated syntax in global |
 | 2 | MEDIUM | 9+2 | `uv run pytest:*` (global) vs `uv run pytest *` (project) — syntax inconsistency + deprecated syntax in global |
+
+---
+
+## Scenario 8: Terraform/IaC project
+
+### Fixture: `~/.claude/settings.json` (global)
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(terraform *)",
+      "Bash(kubectl *)",
+      "Bash(git log *)",
+      "Bash(git status *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)"
+    ],
+    "ask": [
+      "Bash(git commit *)"
+    ]
+  }
+}
+```
+
+### Expected findings:
+
+| # | Severity | Check | Entry | Issue |
+|---|----------|-------|-------|-------|
+| 1 | HIGH | 1 | `terraform *` in allow | Overly permissive — includes `apply` and `destroy` |
+| 2 | HIGH | 1 | `kubectl *` in allow | Overly permissive — includes `delete`, `exec` |
+
+### Expected suggestions:
+- Tighten `terraform *` → allow: `init`, `plan`, `fmt`, `validate`; ask: `apply`, `import`; deny: `destroy`
+- Tighten `kubectl *` → allow: `get`, `describe`, `logs`; ask: `apply`, `create`, `exec`; deny: `delete`
+- Missing baseline deny: git reset --hard, git clean -f, sudo, rm -rf /*, rm -rf ~*
+- Missing baseline ask: git push
+
+---
+
+## Scenario 9: Java/Gradle + Ruby mixed project
+
+### Fixture: `~/.claude/settings.json` (global)
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log *)",
+      "Bash(git status *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -f *)",
+      "Bash(sudo *)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ]
+  }
+}
+```
+
+### Project indicators (in project root):
+- `build.gradle.kts` (Gradle)
+- `Gemfile` (Ruby)
+- `.github/` (GitHub)
+
+### Expected: No findings (clean global settings)
+
+### Expected suggestions (project-type-aware):
+- Java/Gradle: `Bash(./gradlew build *)`, `Bash(./gradlew test *)`, `Bash(./gradlew check *)`
+- Ruby: `Bash(bundle exec rspec *)`, `Bash(bundle exec rake *)`, `Bash(bundle exec rubocop *)`, `Bash(bundle install)`
+- GitHub: `Bash(gh pr list *)`, `Bash(gh pr view *)`, `Bash(gh pr diff *)`, `Bash(gh issue list *)`, `Bash(gh issue view *)`

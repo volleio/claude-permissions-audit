@@ -21,28 +21,14 @@ TESTS_FAILED=0
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
 NC='\033[0m'
 
 setup() {
   TEST_LOG=$(mktemp /tmp/hook-test-XXXXXX.log)
-  # Override LOG_FILE in the hook by wrapping it
-  WRAPPER=$(mktemp /tmp/hook-wrapper-XXXXXX.sh)
-  cat > "$WRAPPER" <<WRAPPER_EOF
-#!/usr/bin/env bash
-export HOME="\$(dirname "$TEST_LOG")"
-# Create a .claude dir so the hook can write to \$HOME/.claude/tool-usage.log
-mkdir -p "\$HOME/.claude"
-LOG_FILE="$TEST_LOG"
-# Source the hook but override LOG_FILE
-# We can't source directly because of set -uo pipefail, so we'll sed the script
-sed "s|LOG_FILE=.*|LOG_FILE=\"$TEST_LOG\"|" "$HOOK_SCRIPT" | bash
-WRAPPER_EOF
-  chmod +x "$WRAPPER"
 }
 
 teardown() {
-  rm -f "$TEST_LOG" "$WRAPPER" 2>/dev/null
+  rm -f "$TEST_LOG" 2>/dev/null
 }
 
 # Run hook with given JSON input, return last line of log
@@ -305,6 +291,35 @@ teardown
 setup
 run_hook "$(make_input "CREDENTIAL=xyz some-command")"
 assert_logged "CREDENTIAL=***REDACTED*** some-command" "CREDENTIAL pattern"
+teardown
+
+# --- Connection string / URL redaction ---
+echo ""
+echo "Connection string redaction:"
+
+setup
+run_hook "$(make_input "DATABASE_URL=postgres://user:pass@host/db some-command")"
+assert_logged "DATABASE_URL=***REDACTED*** some-command" "DATABASE_URL with connection string"
+teardown
+
+setup
+run_hook "$(make_input "REDIS_URL=redis://default:secret@cache:6379 some-command")"
+assert_logged "REDIS_URL=***REDACTED*** some-command" "REDIS_URL"
+teardown
+
+setup
+run_hook "$(make_input "MONGO_URI=mongodb+srv://user:pass@cluster some-command")"
+assert_logged "MONGO_URI=***REDACTED*** some-command" "MONGO_URI"
+teardown
+
+setup
+run_hook "$(make_input "DSN=https://key@sentry.io/123 some-command")"
+assert_logged "DSN=***REDACTED*** some-command" "DSN (Sentry-style)"
+teardown
+
+setup
+run_hook "$(make_input "MYSQL_PWD=rootpass mysql -u root")"
+assert_logged "MYSQL_PWD=***REDACTED*** mysql -u root" "MYSQL_PWD"
 teardown
 
 # --- ERR trap: non-zero exit protection ---

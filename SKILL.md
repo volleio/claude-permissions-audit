@@ -69,13 +69,21 @@ Check for indicator files in the project root to determine project type(s). A pr
 | Indicator | Type |
 |-----------|------|
 | `pyproject.toml` + `uv.lock` | Python/uv |
-| `pyproject.toml` (no uv.lock) | Python (generic) |
+| `pyproject.toml` + `poetry.lock` | Python/Poetry |
+| `pyproject.toml` (no uv.lock or poetry.lock) | Python (generic) |
+| `requirements.txt` or `setup.py` (no pyproject.toml) | Python (pip) |
 | `package.json` + `package-lock.json` | Node/npm |
 | `package.json` + `yarn.lock` | Node/yarn |
 | `package.json` + `pnpm-lock.yaml` | Node/pnpm |
 | `package.json` + `bun.lock` or `bun.lockb` | Node/bun |
 | `Cargo.toml` | Rust |
 | `go.mod` | Go |
+| `pom.xml` | Java/Maven |
+| `build.gradle` or `build.gradle.kts` | Java/Gradle |
+| `*.csproj` or `*.sln` | C#/.NET |
+| `Gemfile` | Ruby |
+| `composer.json` | PHP |
+| `*.tf` files | Terraform |
 | `mise.toml` or `.mise.toml` | Mise |
 | `docker-compose.yml` or `docker-compose.yaml` or `compose.yml` | Docker |
 | `.github/` directory | GitHub |
@@ -127,6 +135,8 @@ Flag entries in `allow` or `ask` that grant broad access to command families wit
 | `Bash(git *)` or `Bash(git:*)` | HIGH | MEDIUM | Includes destructive ops (reset, clean, push --force) |
 | `Bash(npm *)` or `Bash(npm:*)` | HIGH | MEDIUM | `npm exec` allows arbitrary execution |
 | `Bash(PGPASSWORD=* psql *)` or `Bash(PGPASSWORD=* psql:*)` | CRITICAL | CRITICAL | Arbitrary SQL execution. If password is a literal (not `*`), also a credential exposure issue (see check 4) |
+| `Bash(terraform *)` or `Bash(terraform:*)` | HIGH | MEDIUM | `terraform apply`, `terraform destroy` can modify/delete infrastructure |
+| `Bash(kubectl *)` or `Bash(kubectl:*)` | HIGH | MEDIUM | `kubectl delete`, `kubectl exec` can destroy resources or run arbitrary commands |
 
 Risk is lower in `ask` (user still confirms each use) but broad `ask` patterns still warrant tightening.
 
@@ -148,8 +158,9 @@ The legacy `:*` suffix syntax is deprecated. The current syntax uses a space: ` 
 **4. Credential Exposure**
 
 Flag entries containing literal passwords, tokens, or secrets in patterns:
-- `PGPASSWORD=<literal>` — password visible in config
+- `PGPASSWORD=<literal>`, `MYSQL_PWD=<literal>` — database password visible in config
 - `TOKEN=`, `SECRET=`, `API_KEY=` in patterns
+- `DATABASE_URL=` containing embedded credentials (e.g., `postgres://user:pass@host/db`)
 - Risk: CRITICAL (credentials in plain text)
 
 **5. Built-in Tool Overlap**
@@ -173,13 +184,13 @@ Suggested **deny** rules (should never execute):
 - `Bash(git push --force *)` (or `--force-with-lease`, `-f`)
 - `Bash(git reset --hard *)`
 - `Bash(git clean -f *)`
+- `Bash(sudo *)`
 - `Bash(rm -rf /*)` (no space — matches `rm -rf /etc`, `rm -rf /home`, etc.)
 - `Bash(rm -rf ~*)` (no space — matches `rm -rf ~/Documents`, `rm -rf ~`, etc.)
 
 Suggested **ask** rules (should prompt, not auto-approve or auto-deny):
 - `Bash(git commit *)` — human should review before committing
 - `Bash(git push *)` — human should review before pushing (deny rules for `--force` take precedence, so this is safe)
-- `Bash(docker compose down *)` — stops services, may lose data with `-v`
 
 Check all three arrays across global and project settings. Global is preferred for baseline safety rules.
 
@@ -195,13 +206,13 @@ Flag entries in the wrong permission array:
 
 Flag project-specific entries in global settings that should live in the relevant project's `.claude/settings.json` or `.claude/settings.local.json`:
 
-- `Bash(npx playwright install *)` — project-specific tool setup
-- `Bash(PGPASSWORD=postgres psql *)` — project-specific database access
-- `Bash(npx vitest run *)` — project-specific test runner
+- Project-specific test runners (e.g., `Bash(npx vitest run *)`, `Bash(npx jest *)`, `Bash(npx cypress run *)`)
+- Project-specific tool setup (e.g., `Bash(npx playwright install *)`)
+- Database access with credentials (e.g., `Bash(PGPASSWORD=postgres psql *)`, `Bash(MYSQL_PWD=root mysql *)`)
 - Project-specific `WebFetch` domains that only apply to one project
 - Entries referencing project-specific commands not used across projects
 
-Heuristic: If a command is only relevant to one project type (e.g., `vitest` for a specific Node project, `PGPASSWORD` for a specific database), it likely belongs in project settings.
+Heuristic: If a command is only relevant to one project type (e.g., a specific test runner, a specific database), it likely belongs in project settings.
 
 **9. Syntax Inconsistencies**
 
@@ -262,22 +273,34 @@ For entries flagged HIGH or CRITICAL, suggest specific replacements:
 | `Bash(git:*)` | Same as above |
 | `Bash(PGPASSWORD=<literal> psql *)` | Remove from global. If needed in a project, add to that project's `.claude/settings.local.json` with tighter scope |
 | `Bash(npm *)` | `Bash(npm test *)`, `Bash(npm run lint *)`, `Bash(npm run build *)`, `Bash(npm install *)`, `Bash(npm ls *)` (avoid blanket `npm run *` — can execute any package.json script including deploys/migrations) |
+| `Bash(terraform *)` | **allow**: `Bash(terraform init *)`, `Bash(terraform plan *)`, `Bash(terraform fmt *)`, `Bash(terraform validate *)`; **ask**: `Bash(terraform apply *)`, `Bash(terraform import *)`; **deny**: `Bash(terraform destroy *)` |
+| `Bash(kubectl *)` | **allow**: `Bash(kubectl get *)`, `Bash(kubectl describe *)`, `Bash(kubectl logs *)`; **ask**: `Bash(kubectl apply *)`, `Bash(kubectl create *)`, `Bash(kubectl exec *)`; **deny**: `Bash(kubectl delete *)` |
 
 ### B. Add Missing Rules (Project-Type-Aware)
 
 Based on detected project type, suggest additions unless the rule already exists in any settings file. Target the appropriate file:
 - `.claude/settings.json` (project shared) — team-visible rules: test runners, linters, build commands, dev servers
-- `.claude/settings.local.json` (project local) — personal/credential-adjacent rules: database access with passwords, local tool configs, user-specific commands
+- `.claude/settings.local.json` (project local) — personal/credential-adjacent rules: database access with passwords, local tool configs, user-specific commands. **Note**: This file should be in `.gitignore` to avoid committing credentials to version control.
 
 | Project Type | Suggested Allows |
 |-------------|-----------------|
 | Python/uv | `Bash(uv sync)`, `Bash(uv run pytest *)`, `Bash(uv pip show *)`, `Bash(uv pip index versions *)`, `Bash(uv lock)` |
+| Python/Poetry | `Bash(poetry install)`, `Bash(poetry run pytest *)`, `Bash(poetry lock)`, `Bash(poetry show *)` |
+| Python (pip) | `Bash(pip install *)`, `Bash(pip show *)`, `Bash(python -m pytest *)`, `Bash(pip freeze)` |
 | Node/npm | `Bash(npm test *)`, `Bash(npm run lint *)`, `Bash(npm run build *)`, `Bash(npx tsc *)` |
+| Node/yarn | `Bash(yarn test *)`, `Bash(yarn lint *)`, `Bash(yarn build *)`, `Bash(yarn tsc *)` |
+| Node/pnpm | `Bash(pnpm test *)`, `Bash(pnpm run lint *)`, `Bash(pnpm run build *)`, `Bash(pnpm exec tsc *)` |
 | Node/bun | `Bash(bun test *)`, `Bash(bun run lint *)`, `Bash(bun run build *)` (avoid blanket `bun run *` — same risk as `npm run *`) |
 | Rust | `Bash(cargo build *)`, `Bash(cargo test *)`, `Bash(cargo clippy *)`, `Bash(cargo fmt *)` |
 | Go | `Bash(go build *)`, `Bash(go test *)`, `Bash(go vet *)` |
+| Java/Maven | `Bash(mvn compile *)`, `Bash(mvn test *)`, `Bash(mvn package *)`, `Bash(mvn dependency:tree *)` |
+| Java/Gradle | `Bash(./gradlew build *)`, `Bash(./gradlew test *)`, `Bash(./gradlew check *)` |
+| C#/.NET | `Bash(dotnet build *)`, `Bash(dotnet test *)`, `Bash(dotnet run *)`, `Bash(dotnet restore *)` |
+| Ruby | `Bash(bundle exec rspec *)`, `Bash(bundle exec rake *)`, `Bash(bundle exec rubocop *)`, `Bash(bundle install)` |
+| PHP | `Bash(composer install)`, `Bash(./vendor/bin/phpunit *)`, `Bash(./vendor/bin/phpstan *)`. For Laravel: **allow** `Bash(php artisan list *)`, `Bash(php artisan route:list *)`, `Bash(php artisan tinker *)`; **ask** `Bash(php artisan migrate *)`, `Bash(php artisan db:seed *)`; **deny** `Bash(php artisan migrate:fresh *)`, `Bash(php artisan db:wipe *)` |
+| Terraform | **allow**: `Bash(terraform init *)`, `Bash(terraform plan *)`, `Bash(terraform fmt *)`, `Bash(terraform validate *)`; **ask**: `Bash(terraform apply *)`, `Bash(terraform import *)`; **deny**: `Bash(terraform destroy *)` |
 | Mise | One `Bash(mise run <task>)` or `Bash(mise run <task> *)` for each task from `mise tasks ls`. If a task is read-only (test, lint, typecheck, check), use exact match. If a task takes arguments, use wildcard. |
-| Docker | `Bash(docker compose up -d)`, `Bash(docker compose ps *)`, `Bash(docker compose logs *)`, `Bash(docker compose build *)` |
+| Docker | **allow**: `Bash(docker compose up -d)`, `Bash(docker compose ps *)`, `Bash(docker compose logs *)`, `Bash(docker compose build *)`; **ask**: `Bash(docker compose down *)` |
 | GitHub | `Bash(gh pr list *)`, `Bash(gh pr view *)`, `Bash(gh pr diff *)`, `Bash(gh issue list *)`, `Bash(gh issue view *)` |
 | Make | Individual `Bash(make <target>)` entries for each safe target (read the Makefile to enumerate). Do not suggest `Bash(make *)` — make targets can run arbitrary commands |
 
@@ -437,9 +460,9 @@ When invoked with `/permissions-audit discover <tool-name>`, explore a CLI tool 
 1. Run `<tool> --help` (or `<tool> -h`, `<tool> help`) to get top-level commands/subcommands
 2. For command groups that have their own subcommands, recurse one level: `<tool> <group> --help`
 3. Stop at 2 levels of depth to avoid excessive exploration
-4. If the tool is well-known (kubectl, aws, gh, docker, terraform, pup), leverage knowledge of its command tree to supplement `--help` output
+4. If the tool is well-known (kubectl, aws, gcloud, az, gh, docker, terraform, helm), leverage knowledge of its command tree to supplement `--help` output
 
-**Security**: Only run `--help` / `-h` / `help` subcommands. Never run the tool's actual commands (e.g., don't run `pup synthetics tests create` to "test" it). Discovery is read-only.
+**Security**: Only run `--help` / `-h` / `help` subcommands. Never run the tool's actual commands (e.g., don't run `kubectl delete namespace prod` to "test" it). Discovery is read-only.
 
 ### Step 2: Determine target file
 
@@ -523,7 +546,7 @@ rm ~/.claude/tool-usage.log
 
 Each line: `<ISO-8601 timestamp> <redacted command>`
 
-Secrets are redacted before writing: `KEY=VALUE` patterns where KEY contains PASSWORD, TOKEN, SECRET, API_KEY, CREDENTIAL, AWS_SECRET_ACCESS_KEY, or PRIVATE_KEY have their value replaced with `***REDACTED***`. Both unquoted (`KEY=value`) and quoted (`KEY="value"`, `KEY='value'`) forms are redacted.
+Secrets are redacted before writing: `KEY=VALUE` patterns where KEY contains PASSWORD, TOKEN, SECRET, API_KEY, CREDENTIAL, AWS_SECRET_ACCESS_KEY, PRIVATE_KEY, DATABASE_URL, REDIS_URL, MONGO_URI, DSN, or MYSQL_PWD have their value replaced with `***REDACTED***`. Both unquoted (`KEY=value`) and quoted (`KEY="value"`, `KEY='value'`) forms are redacted.
 
 **Redaction is best-effort.** It does NOT catch: secrets as positional arguments, bearer tokens in headers, base64-encoded credentials, or any format that isn't `KEY=VALUE`. The log file is written with 0600 permissions (owner-only read/write).
 

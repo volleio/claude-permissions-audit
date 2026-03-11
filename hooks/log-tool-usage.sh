@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PostToolUse hook: logs Bash commands to ~/.claude/tool-usage.log
-# Redacts KEY=VALUE secrets (PASSWORD, TOKEN, SECRET, API_KEY, CREDENTIAL, PRIVATE_KEY)
+# Redacts KEY=VALUE secrets (PASSWORD, TOKEN, SECRET, API_KEY, CREDENTIAL, PRIVATE_KEY, DATABASE_URL, etc.)
 #
 # Install:
 #   cp hooks/log-tool-usage.sh ~/.claude/hooks/
@@ -40,9 +40,9 @@ fi
 
 # Redact secrets in KEY=VALUE patterns (unquoted, double-quoted, single-quoted)
 redacted=$(printf '%s' "$command_str" | sed -E \
-  -e 's/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY)="[^"]*"/\1=***REDACTED***/gi' \
-  -e "s/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY)='[^']*'/\1=***REDACTED***/gi" \
-  -e 's/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY)=[^ "'"'"'"][^ ]*/\1=***REDACTED***/gi')
+  -e 's/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY|DATABASE_URL|REDIS_URL|MONGO_URI|DSN|MYSQL_PWD)="[^"]*"/\1=***REDACTED***/gi' \
+  -e "s/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY|DATABASE_URL|REDIS_URL|MONGO_URI|DSN|MYSQL_PWD)='[^']*'/\1=***REDACTED***/gi" \
+  -e 's/(PASSWORD|TOKEN|SECRET|API_KEY|CREDENTIAL|AWS_SECRET_ACCESS_KEY|PRIVATE_KEY|DATABASE_URL|REDIS_URL|MONGO_URI|DSN|MYSQL_PWD)=[^ "'"'"'"][^ ]*/\1=***REDACTED***/gi')
 
 # Create log file with restricted permissions if it doesn't exist
 if [[ ! -f "$LOG_FILE" ]]; then

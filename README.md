@@ -9,7 +9,6 @@ Also includes a **discover mode** to explore new CLI tools and generate scoped p
 ## Install
 
 ```bash
-cd ~/Projects  # or wherever you keep repos
 git clone https://github.com/volleio/claude-permissions-audit.git
 ln -s "$(pwd)/claude-permissions-audit" ~/.claude/skills/permissions-audit
 ```
@@ -22,8 +21,8 @@ Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with skil
 /permissions-audit                  # audit all settings files
 /permissions-audit global           # only ~/.claude/settings.json
 /permissions-audit project          # only project-level settings
-/permissions-audit discover pup     # explore a CLI tool and suggest permissions
-/permissions-audit discover kubectl # works with any CLI that has --help
+/permissions-audit discover kubectl  # explore a CLI tool and suggest permissions
+/permissions-audit discover terraform # works with any CLI that has --help
 ```
 
 ## What it checks
@@ -40,13 +39,13 @@ Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with skil
 - **Broad non-Bash patterns** — overly permissive `mcp__*`, `Read(*)`, `Write(*)` rules
 - **Default mode check** — flags `bypassPermissions` and other permissive modes
 - **Usage log analysis** — if the optional logging hook is installed, identifies frequently-used commands not yet in allow
-- **Project-type suggestions** — detects Python/uv, Node, Rust, Go, Mise, Docker, GitHub and suggests scoped allows
+- **Project-type suggestions** — detects Python, Node, Rust, Go, Java, C#, Ruby, PHP, Terraform, Mise, Docker, GitHub, Make and suggests scoped allows
 
 ## Features
 
 - **Interactive** — nothing is modified without your approval; review each change one at a time
 - **Backups** — automatically backs up settings files before making changes
-- **Discover mode** — explore a new CLI tool (`pup`, `kubectl`, `terraform`, etc.) and generate scoped allow/ask/deny entries
+- **Discover mode** — explore a new CLI tool (`kubectl`, `terraform`, `helm`, etc.) and generate scoped allow/ask/deny entries
 - **Project-aware** — detects your project type and suggests relevant permissions for the right settings file
 
 ## How it works
