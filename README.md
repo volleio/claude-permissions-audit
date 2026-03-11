@@ -5,9 +5,12 @@ Claude Code skill that audits your permission allow/deny lists across settings f
 ## Install
 
 ```bash
+cd ~/Projects  # or wherever you keep repos
 git clone https://github.com/volleio/claude-permissions-audit.git
 ln -s "$(pwd)/claude-permissions-audit" ~/.claude/skills/permissions-audit
 ```
+
+Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with skills support.
 
 ## Usage
 

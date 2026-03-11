@@ -55,6 +55,10 @@ If the user passed a `scope` argument:
 - `project` — only audit `.claude/settings.json` and `.claude/settings.local.json`
 - `all` (default) — audit all three files
 
+### No Project Directory
+
+If run outside a project (no `.claude/` directory in the working directory), gracefully skip project settings files and only audit the global settings. Note this in the Phase 4 summary. Project-type detection and project-type-aware suggestions are also skipped in this case.
+
 ## Phase 2: Audit
 
 Analyze every entry in every allow/deny list. Classify each finding by risk level.
@@ -85,7 +89,7 @@ Flag entries that grant broad access to command families with known destructive 
 | `Bash(find *)` or `Bash(find:*)` | HIGH | `-exec` allows arbitrary execution |
 | `Bash(git *)` or `Bash(git:*)` | HIGH | Includes destructive ops (reset, clean, push --force) |
 | `Bash(npm *)` or `Bash(npm:*)` | HIGH | `npm exec` allows arbitrary execution |
-| `Bash(PGPASSWORD=* psql *)` or `Bash(PGPASSWORD=* psql:*)` | CRITICAL | Credentials in pattern + arbitrary SQL |
+| `Bash(PGPASSWORD=* psql *)` or `Bash(PGPASSWORD=* psql:*)` | CRITICAL | Arbitrary SQL execution. If password is a literal (not `*`), also a credential exposure issue (see check 4) |
 
 **2. Deprecated Syntax**
 
@@ -98,7 +102,7 @@ The legacy `:*` suffix syntax is deprecated. The current syntax uses a space: ` 
 **3. Duplicates**
 
 - **Exact duplicates**: Same string appears multiple times in the same file's allow or deny list
-- **Cross-file duplicates**: Same rule in both global and project settings (project rule is redundant if global already allows it; but may be intentional for documentation)
+- **Cross-file duplicates**: Same rule in both global and project settings (project rule is redundant if global already allows it). Always flag — let the user decide whether to keep or remove
 - **Subset duplicates**: `Bash(mise run check *)` is a subset of `Bash(mise run check:*)` or vice versa. `Bash(pip index *)` subsumes `Bash(pip index versions *)`
 
 **4. Credential Exposure**
@@ -128,8 +132,8 @@ Check if these baseline safety denies exist. If not, suggest adding them:
 - `Bash(git push --force *)` (or `--force-with-lease`, `-f`)
 - `Bash(git reset --hard *)`
 - `Bash(git clean -f *)`
-- `Bash(rm -rf / *)`
-- `Bash(rm -rf ~ *)`
+- `Bash(rm -rf /*)` (no space — matches `rm -rf /etc`, `rm -rf /home`, etc.)
+- `Bash(rm -rf ~*)` (no space — matches `rm -rf ~/Documents`, `rm -rf ~`, etc.)
 
 Check both global and project deny lists. Global is preferred for these.
 
@@ -161,7 +165,7 @@ For entries flagged HIGH or CRITICAL, suggest specific replacements:
 
 | Current | Suggested Replacements |
 |---------|----------------------|
-| `Bash(docker compose *)` | `Bash(docker compose up *)`, `Bash(docker compose ps *)`, `Bash(docker compose logs *)`, `Bash(docker compose build *)`, `Bash(docker compose exec *)` |
+| `Bash(docker compose *)` | `Bash(docker compose up *)`, `Bash(docker compose ps *)`, `Bash(docker compose logs *)`, `Bash(docker compose build *)` (omit `exec` — runs arbitrary commands in containers) |
 | `Bash(docker compose:*)` | Same as above (also migrates deprecated syntax) |
 | `Bash(find *)` | Remove (use Glob) or scope: `Bash(find * -name *)`, `Bash(find * -type *)` |
 | `Bash(find:*)` | Same as above |
@@ -172,7 +176,9 @@ For entries flagged HIGH or CRITICAL, suggest specific replacements:
 
 ### B. Add Missing Rules (Project-Type-Aware)
 
-Based on detected project type, suggest additions to the **project shared** settings (`.claude/settings.json`), unless the rule already exists in any settings file.
+Based on detected project type, suggest additions unless the rule already exists in any settings file. Target the appropriate file:
+- `.claude/settings.json` (project shared) — team-visible rules: test runners, linters, build commands, dev servers
+- `.claude/settings.local.json` (project local) — personal/credential-adjacent rules: database access with passwords, local tool configs, user-specific commands
 
 | Project Type | Suggested Allows |
 |-------------|-----------------|
