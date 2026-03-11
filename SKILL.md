@@ -408,10 +408,10 @@ Settings files are JSON. Follow these rules strictly:
 1. **Read before edit**: Always Read the file immediately before editing to get current content
 2. **Targeted array edits**: Use the Edit tool to modify specific entries in the `permissions.allow`, `permissions.deny`, or `permissions.ask` arrays. Never rewrite the entire file.
 3. **Preserve structure**: Never modify, reorder, or touch any fields outside of `permissions.allow`, `permissions.deny`, and `permissions.ask`
-4. **Valid JSON**: After each edit, verify the file is valid JSON by reading it back
+4. **Validate after every edit**: After each edit, run `python3 -c "import json; json.load(open('<file_path>'))"` using the Bash tool to verify the file is valid JSON. If validation fails, immediately fix the issue before proceeding. **This is mandatory — a broken settings file will prevent Claude Code from starting.**
 5. **Array operations**:
-   - **Remove entry**: Edit the array to remove the specific line (handle trailing commas)
-   - **Add entry**: Edit to insert at the end of the array before the closing `]`
+   - **Remove entry**: Edit the array to remove the specific line. **CRITICAL: When removing the last entry in an array, also remove the trailing comma from the new last entry.** JSON does not allow trailing commas. Example: removing entry C from `["A", "B", "C"]` must produce `["A", "B"]`, not `["A", "B",]`.
+   - **Add entry**: Edit to insert at the end of the array before the closing `]`. Add a comma after the current last entry.
    - **Replace entry**: Edit old string to new string
    - **Create array**: If the file has no `ask` (or `deny`) array and one is needed, add it as a sibling to the existing arrays inside the `permissions` object. Example: insert `"ask": ["Bash(git commit *)"]` after the `allow` array's closing `]`
 6. **Batch edits**: When multiple changes apply to the same file, make them in a single Edit operation to avoid intermediate invalid states
